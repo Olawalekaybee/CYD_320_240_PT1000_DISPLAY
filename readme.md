@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/logo_preview.png" width="180"/>
+<img src="assets/aolyf_dynamics_logo.png" width="180"/>
 
 # CYD ESP32 PT1000 Temperature Dashboard
 
