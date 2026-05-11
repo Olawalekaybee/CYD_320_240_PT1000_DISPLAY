@@ -2,7 +2,6 @@
 #include <Wire.h>
 #include <TFT_eSPI.h>
 #include "aowlyf_logo.h"
-#include <math.h>
 
 #define TFT_BL 21
 
@@ -11,12 +10,23 @@
 #define I2C_SCL 22
 
 TFT_eSPI tft = TFT_eSPI();
-TFT_eSprite logoSprite = TFT_eSprite(&tft);
+
+struct SensorData
+{
+    int status;   // Used as WiFi status from master: 1 = connected, 0 = offline
+    float t1;
+    float t2;
+    float t3;
+    float t4;
+    int SU;       // Threshold setting
+};
 
 volatile bool newData = false;
 
+SensorData receivedData;
+SensorData displayData;
+
 float temps[4] = {0, 0, 0, 0};
-float receivedTemps[4] = {0, 0, 0, 0};
 
 unsigned long lastUpdate = 0;
 
@@ -36,6 +46,10 @@ void setup()
     digitalWrite(TFT_BL, HIGH);
 
     tft.init();
+
+    // Keep this because it fixed your CYD color issue
+    tft.invertDisplay(true);
+
     tft.setRotation(1);
 
     showSplashLogo(3000);
@@ -56,16 +70,47 @@ void loop()
     if (newData)
     {
         noInterrupts();
-        memcpy(temps, (const void*)receivedTemps, sizeof(temps));
+
+        memcpy(
+            (void *)&displayData,
+            (const void *)&receivedData,
+            sizeof(SensorData)
+        );
+
         newData = false;
+
         interrupts();
 
-        Serial.println("Temperature data received");
+        temps[0] = displayData.t1;
+        temps[1] = displayData.t2;
+        temps[2] = displayData.t3;
+        temps[3] = displayData.t4;
+
+        Serial.println("Data received from ESP32-S3 Master");
+
+        Serial.print("WiFi Status: ");
+        Serial.print(displayData.status == 1 ? "CONNECTED" : "OFFLINE");
+
+        Serial.print(" | Temp: ");
+        Serial.println(displayData.t1);
+
+        Serial.print(" | Temp1: ");
+        Serial.println(displayData.t2);
+
+        Serial.print(" | Temp2: ");
+        Serial.println(displayData.t3);
+
+        Serial.print(" | Temp3: ");
+        Serial.println(displayData.t4);
+
+        Serial.print(" | Threshold Setting: ");
+        Serial.println(displayData.SU);
     }
 
     if (millis() - lastUpdate > 1000)
     {
         lastUpdate = millis();
+
         drawCards();
         drawStatusBar();
     }
@@ -73,11 +118,11 @@ void loop()
 
 void receiveEvent(int bytes)
 {
-    if (bytes == sizeof(receivedTemps))
+    if (bytes == sizeof(SensorData))
     {
-        byte buffer[sizeof(receivedTemps)];
+        byte buffer[sizeof(SensorData)];
 
-        for (int i = 0; i < sizeof(receivedTemps); i++)
+        for (int i = 0; i < sizeof(SensorData); i++)
         {
             if (Wire.available())
             {
@@ -85,7 +130,12 @@ void receiveEvent(int bytes)
             }
         }
 
-        memcpy((void*)receivedTemps, buffer, sizeof(receivedTemps));
+        memcpy(
+            (void *)&receivedData,
+            buffer,
+            sizeof(SensorData)
+        );
+
         newData = true;
     }
     else
@@ -107,14 +157,12 @@ void showSplashLogo(uint32_t durationMs)
 
         tft.fillScreen(TFT_WHITE);
 
-        // Logo size and position
         int logoW = 160;
         int logoH = 120;
 
         int logoX = (320 - logoW) / 2;
         int logoY = 35;
 
-        // Draw logo
         tft.pushImage(
             logoX,
             logoY,
@@ -123,29 +171,17 @@ void showSplashLogo(uint32_t durationMs)
             aowlyf_logo
         );
 
-        // Loading text
         tft.setTextDatum(MC_DATUM);
-
         tft.setTextSize(1);
+        tft.setTextColor(TFT_DARKGREY, TFT_WHITE);
 
-        tft.setTextColor(
-            TFT_DARKGREY,
-            TFT_WHITE
-        );
+        tft.drawString("Starting System...", 160, 195);
 
-        tft.drawString(
-            "Starting System...",
-            160,
-            195
-        );
-
-        // Loading bar dimensions
         int barX = 60;
         int barY = 215;
         int barW = 200;
         int barH = 14;
 
-        // Draw loading bar border
         tft.drawRoundRect(
             barX,
             barY,
@@ -155,7 +191,6 @@ void showSplashLogo(uint32_t durationMs)
             TFT_LIGHTGREY
         );
 
-        // Calculate progress width
         int progress = map(
             elapsed,
             0,
@@ -164,7 +199,6 @@ void showSplashLogo(uint32_t durationMs)
             barW - 4
         );
 
-        // Fill loading bar
         tft.fillRoundRect(
             barX + 2,
             barY + 2,
@@ -174,7 +208,6 @@ void showSplashLogo(uint32_t durationMs)
             tft.color565(0, 120, 255)
         );
 
-        // Calculate percentage
         int percentage = map(
             elapsed,
             0,
@@ -184,24 +217,16 @@ void showSplashLogo(uint32_t durationMs)
         );
 
         if (percentage > 100)
+        {
             percentage = 100;
+        }
 
-        // Display percentage text
         tft.setTextSize(1);
+        tft.setTextColor(TFT_BLACK, TFT_WHITE);
 
-        tft.setTextColor(
-            TFT_BLACK,
-            TFT_WHITE
-        );
+        String percentText = String(percentage) + "%";
 
-        String percentText =
-            String(percentage) + "%";
-
-        tft.drawString(
-            percentText,
-            160,
-            233
-        );
+        tft.drawString(percentText, 160, 233);
 
         delay(30);
     }
@@ -215,12 +240,28 @@ void drawBackground()
 {
     for (int y = 0; y < 240; y++)
     {
-        uint16_t color = tft.color565(5, y / 3, 80 + y / 4);
+        uint16_t color = tft.color565(
+            5,
+            y / 3,
+            80 + y / 4
+        );
+
         tft.drawFastHLine(0, y, 320, color);
     }
 
-    tft.fillCircle(270, 30, 55, tft.color565(0, 100, 160));
-    tft.fillCircle(45, 215, 65, tft.color565(20, 70, 120));
+    tft.fillCircle(
+        270,
+        30,
+        55,
+        tft.color565(0, 100, 160)
+    );
+
+    tft.fillCircle(
+        45,
+        215,
+        65,
+        tft.color565(20, 70, 120)
+    );
 }
 
 void drawHeader()
@@ -244,17 +285,43 @@ void drawCards()
     drawCard(170, 130, 135, 60, "Sensor 4", temps[3]);
 }
 
-void drawCard(int x, int y, int w, int h, String title, float temp)
+void drawCard(
+    int x,
+    int y,
+    int w,
+    int h,
+    String title,
+    float temp
+)
 {
     uint16_t cardBg = tft.color565(15, 35, 65);
 
-    tft.fillRoundRect(x, y, w, h, 12, cardBg);
-    tft.drawRoundRect(x, y, w, h, 12, tft.color565(80, 180, 255));
+    tft.fillRoundRect(
+        x,
+        y,
+        w,
+        h,
+        12,
+        cardBg
+    );
+
+    tft.drawRoundRect(
+        x,
+        y,
+        w,
+        h,
+        12,
+        tft.color565(80, 180, 255)
+    );
 
     tft.setTextDatum(TL_DATUM);
 
     tft.setTextSize(1);
-    tft.setTextColor(tft.color565(160, 220, 255), cardBg);
+    tft.setTextColor(
+        tft.color565(160, 220, 255),
+        cardBg
+    );
+
     tft.drawString(title, x + 12, y + 8);
 
     tft.setTextSize(2);
@@ -266,18 +333,43 @@ void drawCard(int x, int y, int w, int h, String title, float temp)
 
 void drawStatusBar()
 {
-    int x = 70;
+    int x = 20;
     int y = 205;
-    int w = 180;
-    int h = 22;
+    int w = 280;
+    int h = 28;
 
-    uint16_t bg = tft.color565(45, 95, 160);
+    bool wifiConnected = displayData.status == 1;
 
-    tft.fillRoundRect(x, y, w, h, 8, bg);
+    uint16_t bg = wifiConnected
+                      ? tft.color565(0, 130, 75)
+                      : tft.color565(160, 40, 40);
+
+    tft.fillRoundRect(
+        x,
+        y,
+        w,
+        h,
+        8,
+        bg
+    );
 
     tft.setTextDatum(MC_DATUM);
     tft.setTextSize(1);
     tft.setTextColor(TFT_WHITE, bg);
 
-    tft.drawString("I2C SLAVE ACTIVE 0x08", x + w / 2, y + h / 2);
+    String wifiText = wifiConnected
+                          ? "WiFi: CONNECTED"
+                          : "WiFi: OFFLINE";
+
+    String displayText =
+        wifiText +
+        " | THRESHOLD: " +
+        String(displayData.SU) +
+        " C";
+
+    tft.drawString(
+        displayText,
+        x + w / 2,
+        y + h / 2
+    );
 }

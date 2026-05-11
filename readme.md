@@ -1,3 +1,9 @@
+---
+noteId: "40e694504d0e11f1b2c32576417ba8f2"
+tags: []
+
+---
+
 <div align="center">
 
 <img src="assets/aolyf_dynamics_logo.png" width="180"/>
